@@ -5,6 +5,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
 
 local function getDefaultParent()
     if RunService:IsStudio() then
@@ -22,6 +23,45 @@ local function addCorner(frame, radius)
     corner.Parent = frame
 end
 
+local function createToast(message, duration)
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SynergyToast"
+    gui.Parent = getDefaultParent()
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.IgnoreGuiInset = true
+
+    local frame = Instance.new("Frame")
+    frame.Parent = gui
+    frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    frame.BorderSizePixel = 0
+    frame.Position = UDim2.new(1, -10, 0, 10)
+    frame.Size = UDim2.new(0, 200, 0, 50)
+    frame.AnchorPoint = Vector2.new(1, 0)
+    addCorner(frame, 6)
+
+    local label = Instance.new("TextLabel")
+    label.Parent = frame
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, -20, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.Font = Enum.Font.Gotham
+    label.Text = message
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 12
+    label.TextWrapped = true
+
+    TweenService:Create(frame, TweenInfo.new(0.3), {Position = UDim2.new(1, -10, 0, 10)}):Play()
+    task.wait(duration or 3)
+    TweenService:Create(frame, TweenInfo.new(0.3), {Position = UDim2.new(1, 210, 0, 10)}):Play()
+    task.wait(0.3)
+    gui:Destroy()
+end
+
+function SynergyUI:Notify(message, duration)
+    createToast(message, duration)
+end
+
 function SynergyUI:CreateWindow(options)
     options = options or {}
     local title = options.Title or "Synergy Hub"
@@ -33,6 +73,7 @@ function SynergyUI:CreateWindow(options)
     local minColor = options.MinimizeButtonColor or Color3.fromRGB(255, 255, 255)
     local parent = options.Parent or getDefaultParent()
     local toggleKey = options.ToggleKey or Enum.KeyCode.X
+    local configFile = options.ConfigFile or ""
 
     local gui = Instance.new("ScreenGui")
     gui.Name = "SynergyUI_" .. tostring(os.time())
@@ -176,7 +217,96 @@ function SynergyUI:CreateWindow(options)
         accent = accent,
         bgColor = bgColor,
         sidebarColor = sidebarColor,
+        controls = {},
+        configFile = configFile,
     }
+
+    local function updateAccentColor(newAccent)
+        window.accent = newAccent
+        mainFrame.BorderColor3 = newAccent
+        titleLabel.TextColor3 = newAccent
+        for _, tab in ipairs(window.tabs) do
+            if tab.btn.TextColor3 == window.accent then
+                tab.btn.TextColor3 = newAccent
+            end
+        end
+        for _, control in ipairs(window.controls) do
+            if control.updateAccent then
+                control.updateAccent(newAccent)
+            end
+        end
+    end
+
+    function window:SetAccentColor(newAccent)
+        updateAccentColor(newAccent)
+    end
+
+    local function saveConfig()
+        if window.configFile == "" then return end
+        local config = {
+            position = {mainFrame.Position.X.Scale, mainFrame.Position.X.Offset, mainFrame.Position.Y.Scale, mainFrame.Position.Y.Offset},
+            size = {mainFrame.Size.X.Scale, mainFrame.Size.X.Offset, mainFrame.Size.Y.Scale, mainFrame.Size.Y.Offset},
+            accent = {window.accent.R, window.accent.G, window.accent.B},
+            controls = {}
+        }
+        for _, control in ipairs(window.controls) do
+            if control.saveState then
+                config.controls[control.id] = control.saveState()
+            end
+        end
+        local json = HttpService:JSONEncode(config)
+        if type(writefile) == "function" then
+            writefile(window.configFile, json)
+        end
+    end
+
+    local function loadConfig()
+        if window.configFile == "" then return end
+        local content
+        if type(readfile) == "function" then
+            local success, res = pcall(readfile, window.configFile)
+            if success then content = res end
+        end
+        if not content then return end
+        local config
+        local success, decoded = pcall(HttpService.JSONDecode, HttpService, content)
+        if success then config = decoded end
+        if not config then return end
+        if config.position then
+            mainFrame.Position = UDim2.new(config.position[1], config.position[2], config.position[3], config.position[4])
+        end
+        if config.size then
+            mainFrame.Size = UDim2.new(config.size[1], config.size[2], config.size[3], config.size[4])
+        end
+        if config.accent then
+            updateAccentColor(Color3.new(config.accent[1], config.accent[2], config.accent[3]))
+        end
+        if config.controls then
+            for _, control in ipairs(window.controls) do
+                if control.loadState and config.controls[control.id] then
+                    control.loadState(config.controls[control.id])
+                end
+            end
+        end
+    end
+
+    function window:SaveConfig(filename)
+        filename = filename or window.configFile
+        if filename == "" then return end
+        local old = window.configFile
+        window.configFile = filename
+        saveConfig()
+        window.configFile = old
+    end
+
+    function window:LoadConfig(filename)
+        filename = filename or window.configFile
+        if filename == "" then return end
+        local old = window.configFile
+        window.configFile = filename
+        loadConfig()
+        window.configFile = old
+    end
 
     function window:Toggle()
         uiVisible = not uiVisible
@@ -187,7 +317,7 @@ function SynergyUI:CreateWindow(options)
         gui:Destroy()
     end
 
-    function window:CreateTab(tabName)
+    function window:CreateTab(tabName, icon)
         local tabBtn = Instance.new("TextButton")
         tabBtn.Parent = sidebar
         tabBtn.BackgroundColor3 = sidebarColor
@@ -197,6 +327,17 @@ function SynergyUI:CreateWindow(options)
         tabBtn.Text = tabName
         tabBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
         tabBtn.TextSize = 14
+
+        if icon then
+            local iconLabel = Instance.new("ImageLabel")
+            iconLabel.Parent = tabBtn
+            iconLabel.BackgroundTransparency = 1
+            iconLabel.Position = UDim2.new(0, 5, 0.5, -8)
+            iconLabel.Size = UDim2.new(0, 16, 0, 16)
+            iconLabel.Image = icon
+            iconLabel.ImageColor3 = Color3.fromRGB(200, 200, 200)
+            tabBtn.Text = "    " .. tabName
+        end
 
         local tabContent = Instance.new("ScrollingFrame")
         tabContent.Parent = contentArea
@@ -317,7 +458,9 @@ function SynergyUI:CreateWindow(options)
 
             btn.MouseButton1Click:Connect(function()
                 local success, err = pcall(options.Callback)
-                if not success then warn(err) end
+                if not success then
+                    SynergyUI:Notify("Error: " .. tostring(err), 3)
+                end
                 TweenService:Create(btn, TweenInfo.new(0.1), {TextColor3 = accent}):Play()
                 task.wait(0.1)
                 TweenService:Create(btn, TweenInfo.new(0.1), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
@@ -374,12 +517,24 @@ function SynergyUI:CreateWindow(options)
                     label.TextColor3 = Color3.fromRGB(255, 255, 255)
                 end
                 options.Callback(toggled)
+                if window.configFile ~= "" then saveConfig() end
             end
 
             window.Flags[flag] = { Set = function(_, v) setToggle(v) end }
             click.MouseButton1Click:Connect(function() setToggle(not toggled) end)
 
             if toggled then options.Callback(toggled) end
+
+            local controlId = flag
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return toggled end,
+                loadState = function(state) setToggle(state) end,
+                updateAccent = function(newAccent)
+                    if toggled then inner.BackgroundColor3 = newAccent end
+                    if toggled then label.TextColor3 = newAccent end
+                end
+            })
         end
 
         function tab:CreateSlider(options)
@@ -443,6 +598,7 @@ function SynergyUI:CreateWindow(options)
                 valLabel.Text = formatted
                 fill.Size = UDim2.new((val - options.Range[1]) / (options.Range[2] - options.Range[1]), 0, 1, 0)
                 options.Callback(val)
+                if window.configFile ~= "" then saveConfig() end
             end
 
             dragBtn.InputBegan:Connect(function(input)
@@ -463,6 +619,23 @@ function SynergyUI:CreateWindow(options)
                     updateSlider(input)
                 end
             end)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return value end,
+                loadState = function(state)
+                    value = state
+                    local formatted = math.floor(value) == value and tostring(value) or string.format("%.2f", value)
+                    valLabel.Text = formatted
+                    fill.Size = UDim2.new((value - options.Range[1]) / (options.Range[2] - options.Range[1]), 0, 1, 0)
+                    options.Callback(value)
+                end,
+                updateAccent = function(newAccent)
+                    fill.BackgroundColor3 = newAccent
+                    valLabel.TextColor3 = newAccent
+                end
+            })
         end
 
         function tab:CreateDropdown(options)
@@ -498,6 +671,7 @@ function SynergyUI:CreateWindow(options)
             layout.Parent = container
             layout.SortOrder = Enum.SortOrder.LayoutOrder
 
+            local currentOption = options.CurrentOption or (options.Options[1] or "")
             local function rebuildOptions(optList)
                 for _, child in ipairs(container:GetChildren()) do
                     if child:IsA("TextButton") then child:Destroy() end
@@ -513,10 +687,12 @@ function SynergyUI:CreateWindow(options)
                     optBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
                     optBtn.TextSize = 12
                     optBtn.MouseButton1Click:Connect(function()
+                        currentOption = opt
                         btn.Text = options.Name .. " : " .. opt
                         isOpen = false
                         TweenService:Create(frame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 35)}):Play()
                         options.Callback(opt)
+                        if window.configFile ~= "" then saveConfig() end
                     end)
                 end
                 container.CanvasSize = UDim2.new(0, 0, 0, #optList * 25)
@@ -534,6 +710,20 @@ function SynergyUI:CreateWindow(options)
                     TweenService:Create(frame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 35)}):Play()
                 end
             end)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return currentOption end,
+                loadState = function(state)
+                    currentOption = state
+                    btn.Text = options.Name .. " : " .. state
+                    options.Callback(state)
+                end,
+                updateAccent = function(newAccent)
+                    container.ScrollBarImageColor3 = newAccent
+                end
+            })
 
             return { SetOptions = function(_, newOpts) rebuildOptions(newOpts); options.Options = newOpts end }
         end
@@ -583,6 +773,7 @@ function SynergyUI:CreateWindow(options)
                 local newColor = Color3.new(r, g, b)
                 preview.BackgroundColor3 = newColor
                 options.Callback(newColor)
+                if window.configFile ~= "" then saveConfig() end
             end
 
             local function makeSlider(name, yOffset, colorTint, initial, callback)
@@ -658,6 +849,17 @@ function SynergyUI:CreateWindow(options)
                     TweenService:Create(frame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 35)}):Play()
                 end
             end)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return {r, g, b} end,
+                loadState = function(state)
+                    r, g, b = state[1], state[2], state[3]
+                    updateFinal()
+                end,
+                updateAccent = function(newAccent) end
+            })
         end
 
         function tab:CreateKeybind(options)
@@ -695,18 +897,387 @@ function SynergyUI:CreateWindow(options)
                 bindBtn.Text = "..."
             end)
 
+            local currentKey = options.CurrentKeybind or ""
+            local function trigger()
+                options.Callback(currentKey)
+            end
+
             UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 if binding and input.UserInputType == Enum.UserInputType.Keyboard then
                     binding = false
-                    bindBtn.Text = input.KeyCode.Name
-                    options.Callback(input.KeyCode.Name)
-                elseif not binding and not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name == bindBtn.Text then
-                    options.Callback(input.KeyCode.Name)
+                    currentKey = input.KeyCode.Name
+                    bindBtn.Text = currentKey
+                    options.Callback(currentKey)
+                    if window.configFile ~= "" then saveConfig() end
+                elseif not binding and not gameProcessed and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode.Name == currentKey then
+                    trigger()
                 end
             end)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return currentKey end,
+                loadState = function(state)
+                    currentKey = state
+                    bindBtn.Text = currentKey
+                end,
+                updateAccent = function(newAccent)
+                    bindBtn.TextColor3 = newAccent
+                end
+            })
+        end
+
+        function tab:CreateTextInput(options)
+            local frame = Instance.new("Frame")
+            frame.Parent = tabContent
+            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            frame.Size = UDim2.new(1, 0, 0, 45)
+            addCorner(frame, 4)
+
+            local label = Instance.new("TextLabel")
+            label.Parent = frame
+            label.BackgroundTransparency = 1
+            label.Position = UDim2.new(0, 10, 0, 5)
+            label.Size = UDim2.new(1, -20, 0, 15)
+            label.Font = font
+            label.Text = options.Name
+            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            label.TextSize = 14
+            label.TextXAlignment = Enum.TextXAlignment.Left
+
+            local input = Instance.new("TextBox")
+            input.Parent = frame
+            input.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+            input.Position = UDim2.new(0, 10, 0, 25)
+            input.Size = UDim2.new(1, -20, 0, 15)
+            input.Font = font
+            input.Text = options.CurrentText or ""
+            input.TextColor3 = Color3.fromRGB(200, 200, 200)
+            input.TextSize = 12
+            input.PlaceholderText = options.Placeholder or ""
+            addCorner(input, 4)
+
+            input.FocusLost:Connect(function()
+                options.Callback(input.Text)
+                if window.configFile ~= "" then saveConfig() end
+            end)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return input.Text end,
+                loadState = function(state)
+                    input.Text = state
+                end,
+                updateAccent = function(newAccent) end
+            })
+        end
+
+        function tab:CreateChecklist(options)
+            local frame = Instance.new("Frame")
+            frame.Parent = tabContent
+            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            frame.Size = UDim2.new(1, 0, 0, 35 + (#options.Options * 35))
+            frame.ClipsDescendants = true
+            addCorner(frame, 4)
+
+            local header = Instance.new("TextLabel")
+            header.Parent = frame
+            header.BackgroundTransparency = 1
+            header.Position = UDim2.new(0, 10, 0, 5)
+            header.Size = UDim2.new(1, -20, 0, 25)
+            header.Font = font
+            header.Text = options.Name
+            header.TextColor3 = Color3.fromRGB(255, 255, 255)
+            header.TextSize = 14
+            header.TextXAlignment = Enum.TextXAlignment.Left
+
+            local container = Instance.new("Frame")
+            container.Parent = frame
+            container.BackgroundTransparency = 1
+            container.Position = UDim2.new(0, 0, 0, 35)
+            container.Size = UDim2.new(1, 0, 1, -35)
+
+            local layout = Instance.new("UIListLayout")
+            layout.Parent = container
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Padding = UDim.new(0, 5)
+
+            local toggles = {}
+            local selected = options.CurrentValues or {}
+
+            local function updateCallback()
+                options.Callback(selected)
+                if window.configFile ~= "" then saveConfig() end
+            end
+
+            for _, opt in ipairs(options.Options) do
+                local itemFrame = Instance.new("Frame")
+                itemFrame.Parent = container
+                itemFrame.BackgroundTransparency = 1
+                itemFrame.Size = UDim2.new(1, 0, 0, 30)
+
+                local label = Instance.new("TextLabel")
+                label.Parent = itemFrame
+                label.BackgroundTransparency = 1
+                label.Position = UDim2.new(0, 35, 0, 0)
+                label.Size = UDim2.new(1, -45, 1, 0)
+                label.Font = font
+                label.Text = opt
+                label.TextColor3 = Color3.fromRGB(200, 200, 200)
+                label.TextSize = 12
+                label.TextXAlignment = Enum.TextXAlignment.Left
+
+                local outer = Instance.new("Frame")
+                outer.Parent = itemFrame
+                outer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+                outer.Position = UDim2.new(0, 10, 0.5, -10)
+                outer.Size = UDim2.new(0, 20, 0, 20)
+                addCorner(outer, 20)
+
+                local inner = Instance.new("Frame")
+                inner.Parent = outer
+                inner.BackgroundColor3 = table.find(selected, opt) and accent or Color3.fromRGB(100, 100, 100)
+                inner.Position = UDim2.new(0, 2, 0, 2)
+                inner.Size = UDim2.new(0, 16, 0, 16)
+                addCorner(inner, 16)
+
+                local click = Instance.new("TextButton")
+                click.Parent = itemFrame
+                click.BackgroundTransparency = 1
+                click.Size = UDim2.new(1, 0, 1, 0)
+                click.Text = ""
+
+                local function setChecked(checked)
+                    if checked then
+                        if not table.find(selected, opt) then
+                            table.insert(selected, opt)
+                        end
+                        inner.BackgroundColor3 = accent
+                    else
+                        local index = table.find(selected, opt)
+                        if index then table.remove(selected, index) end
+                        inner.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                    end
+                    updateCallback()
+                end
+
+                setChecked(table.find(selected, opt) ~= nil)
+
+                click.MouseButton1Click:Connect(function()
+                    setChecked(inner.BackgroundColor3 ~= accent)
+                end)
+
+                toggles[opt] = setChecked
+            end
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return selected end,
+                loadState = function(state)
+                    selected = state
+                    for opt, setter in pairs(toggles) do
+                        setter(table.find(selected, opt) ~= nil)
+                    end
+                end,
+                updateAccent = function(newAccent)
+                    for opt, setter in pairs(toggles) do
+                        if table.find(selected, opt) then
+                            setter(true)
+                        end
+                    end
+                end
+            })
+        end
+
+        function tab:CreateRadio(options)
+            local frame = Instance.new("Frame")
+            frame.Parent = tabContent
+            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            frame.Size = UDim2.new(1, 0, 0, 35 + (#options.Options * 35))
+            frame.ClipsDescendants = true
+            addCorner(frame, 4)
+
+            local header = Instance.new("TextLabel")
+            header.Parent = frame
+            header.BackgroundTransparency = 1
+            header.Position = UDim2.new(0, 10, 0, 5)
+            header.Size = UDim2.new(1, -20, 0, 25)
+            header.Font = font
+            header.Text = options.Name
+            header.TextColor3 = Color3.fromRGB(255, 255, 255)
+            header.TextSize = 14
+            header.TextXAlignment = Enum.TextXAlignment.Left
+
+            local container = Instance.new("Frame")
+            container.Parent = frame
+            container.BackgroundTransparency = 1
+            container.Position = UDim2.new(0, 0, 0, 35)
+            container.Size = UDim2.new(1, 0, 1, -35)
+
+            local layout = Instance.new("UIListLayout")
+            layout.Parent = container
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Padding = UDim.new(0, 5)
+
+            local selected = options.CurrentOption or options.Options[1]
+            local radios = {}
+
+            local function updateCallback()
+                options.Callback(selected)
+                if window.configFile ~= "" then saveConfig() end
+            end
+
+            for _, opt in ipairs(options.Options) do
+                local itemFrame = Instance.new("Frame")
+                itemFrame.Parent = container
+                itemFrame.BackgroundTransparency = 1
+                itemFrame.Size = UDim2.new(1, 0, 0, 30)
+
+                local label = Instance.new("TextLabel")
+                label.Parent = itemFrame
+                label.BackgroundTransparency = 1
+                label.Position = UDim2.new(0, 35, 0, 0)
+                label.Size = UDim2.new(1, -45, 1, 0)
+                label.Font = font
+                label.Text = opt
+                label.TextColor3 = Color3.fromRGB(200, 200, 200)
+                label.TextSize = 12
+                label.TextXAlignment = Enum.TextXAlignment.Left
+
+                local outer = Instance.new("Frame")
+                outer.Parent = itemFrame
+                outer.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+                outer.Position = UDim2.new(0, 10, 0.5, -10)
+                outer.Size = UDim2.new(0, 20, 0, 20)
+                addCorner(outer, 20)
+
+                local inner = Instance.new("Frame")
+                inner.Parent = outer
+                inner.BackgroundColor3 = (opt == selected) and accent or Color3.fromRGB(100, 100, 100)
+                inner.Position = UDim2.new(0, 2, 0, 2)
+                inner.Size = UDim2.new(0, 16, 0, 16)
+                addCorner(inner, 16)
+
+                local click = Instance.new("TextButton")
+                click.Parent = itemFrame
+                click.BackgroundTransparency = 1
+                click.Size = UDim2.new(1, 0, 1, 0)
+                click.Text = ""
+
+                local function setSelected(select)
+                    if select then
+                        selected = opt
+                        for otherOpt, otherInner in pairs(radios) do
+                            otherInner.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                        end
+                        inner.BackgroundColor3 = accent
+                        updateCallback()
+                    end
+                end
+
+                click.MouseButton1Click:Connect(function()
+                    setSelected(true)
+                end)
+
+                radios[opt] = inner
+            end
+
+            for opt, inner in pairs(radios) do
+                if opt == selected then
+                    inner.BackgroundColor3 = accent
+                end
+            end
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return selected end,
+                loadState = function(state)
+                    selected = state
+                    for opt, inner in pairs(radios) do
+                        inner.BackgroundColor3 = (opt == selected) and accent or Color3.fromRGB(100, 100, 100)
+                    end
+                end,
+                updateAccent = function(newAccent)
+                    for opt, inner in pairs(radios) do
+                        if opt == selected then
+                            inner.BackgroundColor3 = newAccent
+                        end
+                    end
+                end
+            })
+        end
+
+        function tab:CreateProgressBar(options)
+            local frame = Instance.new("Frame")
+            frame.Parent = tabContent
+            frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            frame.Size = UDim2.new(1, 0, 0, 45)
+            addCorner(frame, 4)
+
+            local label = Instance.new("TextLabel")
+            label.Parent = frame
+            label.BackgroundTransparency = 1
+            label.Position = UDim2.new(0, 10, 0, 5)
+            label.Size = UDim2.new(1, -20, 0, 15)
+            label.Font = font
+            label.Text = options.Name
+            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            label.TextSize = 14
+            label.TextXAlignment = Enum.TextXAlignment.Left
+
+            local bg = Instance.new("Frame")
+            bg.Parent = frame
+            bg.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+            bg.Position = UDim2.new(0, 10, 0, 25)
+            bg.Size = UDim2.new(1, -20, 0, 15)
+            addCorner(bg, 10)
+
+            local fill = Instance.new("Frame")
+            fill.Parent = bg
+            fill.BackgroundColor3 = accent
+            fill.Size = UDim2.new((options.CurrentValue or 0) / 100, 0, 1, 0)
+            addCorner(fill, 10)
+
+            local valueLabel = Instance.new("TextLabel")
+            valueLabel.Parent = bg
+            valueLabel.BackgroundTransparency = 1
+            valueLabel.Size = UDim2.new(1, 0, 1, 0)
+            valueLabel.Font = font
+            valueLabel.Text = (options.CurrentValue or 0) .. "%"
+            valueLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+            valueLabel.TextSize = 12
+            valueLabel.TextStrokeTransparency = 0.5
+
+            local function setProgress(val)
+                val = math.clamp(val, 0, 100)
+                fill.Size = UDim2.new(val / 100, 0, 1, 0)
+                valueLabel.Text = math.floor(val) .. "%"
+                if options.Callback then options.Callback(val) end
+                if window.configFile ~= "" then saveConfig() end
+            end
+
+            setProgress(options.CurrentValue or 0)
+
+            local controlId = options.Flag or options.Name
+            table.insert(window.controls, {
+                id = controlId,
+                saveState = function() return fill.Size.X.Scale * 100 end,
+                loadState = function(state) setProgress(state) end,
+                updateAccent = function(newAccent) fill.BackgroundColor3 = newAccent end
+            })
+
+            return { SetValue = setProgress }
         end
 
         return tab
+    end
+
+    if configFile ~= "" then
+        loadConfig()
     end
 
     return window
