@@ -37,7 +37,7 @@ local function createToast(message, duration, typeColor)
     gui.Name = "SynergyToast_" .. HttpService:GenerateGUID(false)
     gui.Parent = getDefaultParent()
     gui.ResetOnSpawn = false
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling -- CORREGIDO: Antes era Global
     gui.IgnoreGuiInset = true
 
     local frame = Instance.new("Frame")
@@ -109,7 +109,7 @@ function SynergyUI:CreateWindow(options)
     gui.Name = "SynergyUI_" .. HttpService:GenerateGUID(false)
     gui.Parent = options.Parent or getDefaultParent()
     gui.ResetOnSpawn = false
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling -- CORREGIDO: Esto arregla Tabs y Dropdowns invisibles
     gui.IgnoreGuiInset = true
     window.Gui = gui
 
