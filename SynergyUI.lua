@@ -642,7 +642,9 @@ function SynergyUI:CreateWindow(options)
 
         function elements:CreateDropdown(opts)
             local current = opts.CurrentOption or opts.Options[1] or ""
+            local options = opts.Options or {}
             local flag = opts.Flag or opts.Name
+            local dropdown = {}
 
             local frame = Instance.new("Frame")
             frame.Parent = scrollFrame
@@ -687,6 +689,14 @@ function SynergyUI:CreateWindow(options)
 
             local isOpen = false
 
+            local function updateButtonText()
+                if current == "" then
+                    btn.Text = opts.Name .. " : " .. "None"
+                else
+                    btn.Text = opts.Name .. " : " .. current
+                end
+            end
+
             local function build(optionsList)
                 for _, c in ipairs(container:GetChildren()) do
                     if c:IsA("TextButton") then c:Destroy() end
@@ -704,7 +714,7 @@ function SynergyUI:CreateWindow(options)
 
                     addConnection(optBtn.MouseButton1Click:Connect(function()
                         current = opt
-                        btn.Text = opts.Name .. " : " .. opt
+                        updateButtonText()
                         isOpen = false
                         createTween(frame, 0.2, {Size = UDim2.new(1, 0, 0, 35)})
                         icon.Text = "+"
@@ -715,12 +725,12 @@ function SynergyUI:CreateWindow(options)
                 end
                 container.CanvasSize = UDim2.new(0, 0, 0, #optionsList * 25)
             end
-            build(opts.Options)
+            build(options)
 
             addConnection(btn.MouseButton1Click:Connect(function()
                 isOpen = not isOpen
                 if isOpen then
-                    local target = math.min(35 + (#opts.Options * 25), 135)
+                    local target = math.min(35 + (#options * 25), 135)
                     createTween(frame, 0.2, {Size = UDim2.new(1, 0, 0, target)})
                     icon.Text = "-"
                     frame.ZIndex = 5
@@ -734,12 +744,35 @@ function SynergyUI:CreateWindow(options)
             registerControl(flag, 
                 function() return current end, 
                 function(v) 
-                    current = v; btn.Text = opts.Name .. " : " .. v; pcall(opts.Callback, v) 
+                    current = v; updateButtonText(); pcall(opts.Callback, v) 
                 end, 
                 function(c) container.ScrollBarImageColor3 = c end
             )
 
-            return {SetOptions = function(_, newOpts) opts.Options = newOpts; build(newOpts) end}
+            dropdown.SetOptions = function(_, newOpts)
+                options = newOpts
+                build(newOpts)
+                if not table.find(options, current) then
+                    current = ""
+                    updateButtonText()
+                    pcall(opts.Callback, "")
+                end
+            end
+
+            dropdown.SetValue = function(_, val)
+                if table.find(options, val) or val == "" then
+                    current = val
+                    updateButtonText()
+                    pcall(opts.Callback, val)
+                    saveConfig()
+                end
+            end
+
+            dropdown.GetValue = function()
+                return current
+            end
+
+            return dropdown
         end
 
         function elements:CreateChecklist(opts)
